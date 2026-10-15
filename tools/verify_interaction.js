@@ -325,6 +325,59 @@ it('连续走多步都不需要重复点击', () => {
   eq(host.game.moveCount, 4, '四步都应成功');
 });
 
+/* ---------------- 源码结构检查：防住「Canvas 不重绘」这类回归 ---------------- */
+console.log('\n== 源码结构检查（防止再次改出「棋子位置不更新」）==');
+
+const boardSrc = fs.readFileSync(path.join(ROOT, 'entry/src/main/ets/view/ChessBoard.ets'), 'utf8');
+
+it('ChessBoard 的 board 属性挂了 @Watch（Canvas 不会自动重绘）', () => {
+  const m = boardSrc.match(/@Prop\s+@Watch\('(\w+)'\)\s+board\s*:/);
+  ok(m !== null, 'board 属性缺少 @Watch：状态变化不会触发重绘，棋子会停在原位');
+  console.log(`       监听方法：${m[1]}`);
+});
+
+it('@Watch 的处理函数里确实调用了 draw()', () => {
+  const m = boardSrc.match(/@Prop\s+@Watch\('(\w+)'\)\s+board\s*:/);
+  ok(m !== null, '未找到 board 的 @Watch');
+  const handler = m[1];
+  const fnRe = new RegExp(handler + '\\s*\\(\\s*\\)\\s*:\\s*void\\s*\\{([\\s\\S]*?)\\n  \\}');
+  const fn = boardSrc.match(fnRe);
+  ok(fn !== null, `未找到 ${handler} 的实现`);
+  ok(fn[1].indexOf('this.draw()') >= 0, `${handler} 中没有调用 this.draw()`);
+});
+
+it('选中位置、合法着法、最近一步也都挂了 @Watch', () => {
+  for (const prop of ['selectedRow', 'targets', 'lastToRow']) {
+    const re = new RegExp('@Prop\\s+@Watch\\(\\\'' + '\\w+' + '\\\'\\)\\s+' + prop + '\\s*:');
+    ok(re.test(boardSrc), `${prop} 缺少 @Watch，选中环/落点/最近一步不会更新`);
+  }
+});
+
+it('点击处理里会递增 tapSignal（@Watch 通道的前提）', () => {
+  ok(/this\.tapSignal\s*=\s*this\.tapSignal\s*\+\s*1/.test(boardSrc),
+    'onClick 中没有递增 tapSignal，页面收不到点击');
+});
+
+it('页面把 tapRow/tapCol/tapSignal 以双向绑定传入', () => {
+  const pageSrc = fs.readFileSync(PAGE, 'utf8');
+  ok(/tapRow:\s*\$tapRow/.test(pageSrc), 'tapRow 未用 $ 双向绑定');
+  ok(/tapCol:\s*\$tapCol/.test(pageSrc), 'tapCol 未用 $ 双向绑定');
+  ok(/tapSignal:\s*\$tapSignal/.test(pageSrc), 'tapSignal 未用 $ 双向绑定');
+});
+
+it('走子后会把新棋盘写入 boardData（重绘的数据来源）', () => {
+  const { host } = makeHost();
+  host.game.restart();
+  host.boardData = host.game.board;
+  const before = host.boardData.slice();
+  host.fireTap(7, 1);
+  host.fireTap(3, 1);
+  const after = host.boardData;
+  ok(JSON.stringify(after) !== JSON.stringify(before), '走子后 boardData 应发生变化');
+  eq(after[3 * 9 + 1], 6, '(3,1) 应是红炮(6)');
+  eq(after[7 * 9 + 1], 0, '(7,1) 应变空');
+});
+
 console.log(`\n${'='.repeat(52)}`);
 console.log(`通过 ${passed} 项，失败 ${failures.length} 项`);
 if (failures.length > 0) {

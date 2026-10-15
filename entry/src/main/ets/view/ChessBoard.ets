@@ -43,20 +43,25 @@ const STAR_POINTS: number[][] = [
 
 @Component
 export struct ChessBoard {
-  /** 棋盘数据（一维数组，长度 90） */
-  @Prop board: Board = [];
+  /**
+   * 棋盘数据（一维数组，长度 90）。
+   *
+   * 必须挂 @Watch：Canvas 只是画布，状态变化不会自动触发重绘，
+   * 不显式调用 draw() 就会出现「数据已更新但棋子还在原位」。
+   */
+  @Prop @Watch('onBoardChanged') board: Board = [];
   /** 当前选中位置，-1 表示未选中 */
-  @Prop selectedRow: number = -1;
-  @Prop selectedCol: number = -1;
+  @Prop @Watch('onBoardChanged') selectedRow: number = -1;
+  @Prop @Watch('onBoardChanged') selectedCol: number = -1;
   /** 当前选中棋子的合法着法 */
-  @Prop targets: number[][] = [];
+  @Prop @Watch('onBoardChanged') targets: number[][] = [];
   /** 最近一步棋，用于高亮，-1 表示无 */
-  @Prop lastFromRow: number = -1;
-  @Prop lastFromCol: number = -1;
-  @Prop lastToRow: number = -1;
-  @Prop lastToCol: number = -1;
+  @Prop @Watch('onBoardChanged') lastFromRow: number = -1;
+  @Prop @Watch('onBoardChanged') lastFromCol: number = -1;
+  @Prop @Watch('onBoardChanged') lastToRow: number = -1;
+  @Prop @Watch('onBoardChanged') lastToCol: number = -1;
   /** 交点间距（vp），由页面按可用宽度计算后传入 */
-  @Prop cell: number = 36;
+  @Prop @Watch('onBoardChanged') cell: number = 36;
   /**
    * 点击结果回传：与页面双向绑定。
    * 用 @Link 共享状态而不是「给组件属性赋函数」——后者能否生效依赖实现细节，
@@ -78,6 +83,18 @@ export struct ChessBoard {
   };
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
   private ctx: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
+  /** canvas 是否已就绪：就绪前的状态变化无需重绘 */
+  private ready: boolean = false;
+
+  /**
+   * 任何影响画面的状态变化都走这里重绘。
+   * Canvas 不会因为数据变化自动重绘，这是必须的一步。
+   */
+  onBoardChanged(): void {
+    if (this.ready) {
+      this.draw();
+    }
+  }
 
   /**
    * 屏幕坐标 -> 棋盘交点。
@@ -123,6 +140,7 @@ export struct ChessBoard {
         .borderRadius(this.cell * 0.2)
         .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
         .onReady(() => {
+          this.ready = true;
           this.draw();
         })
         .onClick((event: ClickEvent) => {
