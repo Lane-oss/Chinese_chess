@@ -15,8 +15,16 @@ const COLOR_SELECT: string = '#F5A623';
 const COLOR_HINT: string = '#2E7D32';
 const COLOR_LAST: string = '#3E7CB1';
 const PAD_RATIO: number = 0.5;
-/** 交点命中判定半径（相对间距） */
-const HIT_RATIO: number = 0.45;
+/**
+ * 交点命中判定容差（相对格距）。
+ *
+ * locate() 先用 Math.round 把点击吸附到最近的交点，误差本身已被限制在 ±0.5 格距内，
+ * 因此容差达到 0.5 时每个交点正好拥有「离它最近的那一片区域」，整个棋盘被无缝铺满。
+ * 若取 0.45，相邻交点的可点范围 [−0.45, +0.45] 之间会留下 0.45~0.55 的空档（每格 10%），
+ * 点在两个棋子中间偏一点就会被判为无效点击。
+ * 取大于 0.5 的值不会进一步扩大范围（吸附已先行），故 0.5 即可点击范围的上限。
+ */
+const HIT_TOLERANCE: number = 0.5;
 
 /** 九宫斜线端点：[row, col, row, col] */
 const PALACE_LINES: number[][] = [
@@ -49,17 +57,36 @@ export struct ChessBoard {
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
   private ctx: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
 
-  /** 屏幕坐标 -> 棋盘交点，不在命中范围内返回 [-1, -1] */
+  /**
+   * 屏幕坐标 -> 棋盘交点。
+   *
+   * 取最近交点并「钳制」到棋盘范围内：这样即使点在四边的留白上（棋盘外框以内），
+   * 也会落到最近的那个边线交点，边路的车、兵同样好点；而真正在棋盘外的点
+   * （距棋盘矩形超过半格）仍会被拒绝。
+   */
   locate(x: number, y: number): number[] {
     const pad: number = this.cell * PAD_RATIO;
-    const col: number = Math.round((x - pad) / this.cell);
-    const row: number = Math.round((y - pad) / this.cell);
-    if (row < 0 || row >= GRID_ROWS || col < 0 || col >= GRID_COLS) {
-      return [-1, -1];
+    const maxRow: number = GRID_ROWS - 1;
+    const maxCol: number = GRID_COLS - 1;
+
+    let col: number = Math.round((x - pad) / this.cell);
+    let row: number = Math.round((y - pad) / this.cell);
+    if (col < 0) {
+      col = 0;
+    } else if (col > maxCol) {
+      col = maxCol;
     }
+    if (row < 0) {
+      row = 0;
+    } else if (row > maxRow) {
+      row = maxRow;
+    }
+
+    // 钳制后到交点的距离必然 <= 0.5 格，因此只需拒绝明显在棋盘外的点
     const dx: number = Math.abs(x - (pad + col * this.cell));
     const dy: number = Math.abs(y - (pad + row * this.cell));
-    if (dx > this.cell * HIT_RATIO || dy > this.cell * HIT_RATIO) {
+    const outside: number = this.cell * HIT_TOLERANCE;
+    if (dx > outside || dy > outside) {
       return [-1, -1];
     }
     return [row, col];
