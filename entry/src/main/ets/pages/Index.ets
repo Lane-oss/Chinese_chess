@@ -5,7 +5,7 @@
 
 import { ChessBoard } from '../view/ChessBoard';
 import { MoveRecord, XiangqiGame } from '../game/XiangqiGame';
-import { GRID_ROWS, Player, playerName } from '../game/XiangqiRules';
+import { GRID_COLS, GRID_ROWS, Player, pieceName, playerName } from '../game/XiangqiRules';
 
 /** 阵营对应的强调色 */
 function sideColor(side: Player): string {
@@ -22,6 +22,8 @@ interface BoardGeometry {
 const CELL_RATIO: number = 0.098;
 /** 页面底色 */
 const PAGE_BG: string = '#F4EFE4';
+/** 命中反馈的底色 */
+const COLOR_TAP_FEEDBACK: string = '#E53935';
 
 @Entry
 @Component
@@ -35,6 +37,14 @@ struct Index {
   @State geo: BoardGeometry = { cell: 34, pad: 17 };
   @State toast: string = '';
   @State showToast: boolean = false;
+  /** 最近一次点击被识别成的交点（-1 表示未命中棋盘），用于在棋盘上直接显示识别结果 */
+  @State tapRow: number = -1;
+  @State tapCol: number = -1;
+  /** 是否显示命中标记（2 秒后自动消失，避免干扰下棋） */
+  @State tapVisible: boolean = false;
+  /** 最近一次点击的判定说明 */
+  @State tapText: string = '';
+  private tapTimer: number = -1;
 
   aboutToAppear(): void {
     this.game.restart();
@@ -78,28 +88,66 @@ struct Index {
     }, 1600);
   }
 
-  /** 落点处理：选子 / 走子 / 取消 / 换选 */
+  /**
+   * 落点处理：选子 / 走子 / 换选。
+   *
+   * 注意：只有「再点同一个子」和「成功走子」才会清空选中；
+   * 点到空白处或对方棋子时保留当前选中，避免用户点偏一点就丢失已标出的合法落点。
+   */
   private handleTap(row: number, col: number): void {
     if (row < 0 || col < 0) {
+      this.showTapFeedback(row, col, '未命中棋盘，请点棋子或落点');
+      this.showMessage('点偏了，请对准棋子或绿点');
       return;
     }
     if (this.game.status !== 'playing') {
       this.showMessage('本局已结束，请点“重开一局”');
       return;
     }
+
     if (this.selectedRow < 0) {
-      this.selectAt(row, col);
+      if (this.game.isSelectable(row, col)) {
+        this.selectAt(row, col);
+      } else {
+        this.showTapFeedback(row, col, `(${row},${col}) 不能选`);
+        this.showMessage('请先选自己的棋子');
+      }
       return;
     }
+
     if (this.selectedRow === row && this.selectedCol === col) {
       this.clearSelection();
+      this.showTapFeedback(row, col, '取消选择');
       return;
     }
+
     if (this.isTarget(row, col)) {
       this.applyMove(this.selectedRow, this.selectedCol, row, col);
       return;
     }
-    this.selectAt(row, col);
+
+    // 点到非落点：能选就换选，否则保留当前选中并提示
+    if (this.game.isSelectable(row, col)) {
+      this.selectAt(row, col);
+    } else {
+      this.showTapFeedback(row, col, `(${row},${col}) 不是落点`);
+      this.showMessage('这里不是合法落点，选中状态已保留');
+    }
+  }
+
+  /** 在棋盘上标出本次点击被识别成的交点，并显示判定说明 */
+  private showTapFeedback(row: number, col: number, text: string): void {
+    this.tapRow = row;
+    this.tapCol = col;
+    this.tapText = text;
+    this.tapVisible = true;
+    if (this.tapTimer >= 0) {
+      clearTimeout(this.tapTimer);
+    }
+    this.tapTimer = setTimeout(() => {
+      this.tapVisible = false;
+      this.tapTimer = -1;
+    }, 2000);
   }
 
   private selectAt(row: number, col: number): void {
@@ -110,6 +158,8 @@ struct Index {
     this.selectedRow = row;
     this.selectedCol = col;
     this.targetList = this.game.getLegalTargets(row, col);
+    const piece: number = this.boardData[row * GRID_COLS + col];
+    this.showTapFeedback(row, col, `选中 ${pieceName(piece)} 可选 ${this.targetList.length} 处`);
   }
 
   private isTarget(row: number, col: number): boolean {
@@ -129,6 +179,7 @@ struct Index {
     this.boardData = this.game.board;
     this.lastMove = this.game.lastMove;
     this.clearSelection();
+    this.showTapFeedback(toRow, toCol, `已走 ${fromRow},${fromCol} → ${toRow},${toCol}`);
 
     if (this.game.status !== 'playing') {
       const winner: Player | null = this.game.winner;
@@ -198,6 +249,13 @@ struct Index {
       Text(`已走 ${this.game.moveCount} 步`)
         .fontSize(12)
         .fontColor('#8D6E63')
+
+      // 点击判定反馈：显示系统把这次点击识别成了哪一格，便于发现点偏
+      if (this.tapText.length > 0) {
+        Text(this.tapText)
+          .fontSize(12)
+          .fontColor(COLOR_TAP_FEEDBACK)
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Center)
@@ -216,6 +274,9 @@ struct Index {
         lastToRow: this.lastMove === null ? -1 : this.lastMove.toRow,
         lastToCol: this.lastMove === null ? -1 : this.lastMove.toCol,
         cell: this.geo.cell,
+        tapRow: this.tapRow,
+        tapCol: this.tapCol,
+        tapVisible: this.tapVisible,
         onTap: (row: number, col: number) => {
           this.handleTap(row, col);
         }

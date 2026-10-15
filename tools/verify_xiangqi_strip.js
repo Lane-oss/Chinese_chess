@@ -213,18 +213,36 @@ function stripArkTs(source) {
   // 5) 箭头函数类型的字段：onTap: (a: number) => void = ...
   out = out.replace(/(\w+)\s*:\s*\([^)]*\)\s*=>\s*[\w<>\[\]| ]+(\s*=)/g, '$1$2');
 
-  // 6) 变量/常量声明上的类型标注
-  out = out.replace(/\b(const|let|var)\s+(\w+)\s*:\s*[A-Za-z_][\w<>\[\]|.'\s]*?(\s*=)/g, '$1 $2$3');
+  // 6) 变量/常量的类型标注（限制在同一行，避免跨行吞掉后面的代码）
+  out = out.replace(/\bconst\s+(\w+)\s*:\s*([^\n;{}]+?)\s*=/g, 'const $1 =');
+  out = out.replace(/\blet\s+(\w+)\s*:\s*([^\n;{}]+?)\s*=/g, 'let $1 =');
+  out = out.replace(/\bvar\s+(\w+)\s*:\s*([^\n;{}]+?)\s*=/g, 'var $1 =');
 
-  // 7) 函数返回类型标注
-  out = out.replace(/\)\s*:\s*[A-Za-z_][\w<>\[\]|.'\s]*?(?=\s*\{)/g, ')');
-  out = out.replace(/\)\s*:\s*[A-Za-z_][\w<>\[\]|.'\s]*?(?=\s*=>)/g, ')');
-  out = out.replace(/\)\s*:\s*[A-Za-z_][\w<>\[\]|.'\s]*?(?=\s*;)/g, ')');
+  // 6b) 类/结构体字段类型标注与修饰符。
+  //     脚本里没有 class 关键字，必须把 private/public/protected/readonly 一并去掉，
+  //     否则 `private x = 1` 在普通作用域中非法（曾导致语法错误）。
+  //     注意两点：修饰符分支要用 (?:...) 包住；类型部分用「首字符必须是标识符首字符」的
+  //     字符集直接吞掉整个类型（能覆盖 MoveRecord[]、Board[]、number[][]、A | null 等）。
+  const fieldMods = '(?:private|public|protected|readonly|static)\\s+';
+  const fieldType = "[A-Za-z_$][\\w$.\\[\\]<>|,?'\"\\s]*";
+  out = out.replace(
+    new RegExp('^(\\s*)(?:' + fieldMods + ')*([A-Za-z_$][\\w$]*)\\s*:\\s*' + fieldType + '\\s*=', 'gm'),
+    '$1$2 =');
+  out = out.replace(
+    new RegExp('^(\\s*)(?:' + fieldMods + ')+([A-Za-z_$][\\w$]*)\\s*=', 'gm'),
+    '$1$2 =');
 
-  // 8) 类字段类型标注（private x: T = ...）
-  out = out.replace(/^(\s*)(private|public|protected|readonly)?\s*(\w+)\s*:\s*[A-Za-z_][\w<>\[\]|.'\s]*?(\s*=)/gm, '$1$3$4');
+  // 6c) ArkUI 装饰器字段（@State/@Prop/@Link 等）的类型标注
+  out = out.replace(
+    new RegExp('^([ \\t]*@\\w+\\s+[A-Za-z_$][\\w$]*)\\s*:\\s*' + fieldType + '\\s*=', 'gm'),
+    '$1 =');
 
-  // 9) 类型断言 x as T
+  // 7) 函数返回类型标注。只处理「返回类型后面紧跟 { 或 =>」的情况：
+  //    若放宽到分号，会误伤 `cond ? a : b;` 这类三元表达式（它同样以 ) : ... ; 结尾）。
+  out = out.replace(/\)\s*:\s*([^\n;{}]+?)\s*(?=\{)/g, ') ');
+  out = out.replace(/\)\s*:\s*([^\n;{}]+?)\s*(?==>)/g, ') ');
+
+  // 8) 类型断言 x as T
   out = out.replace(/\s+as\s+[A-Za-z_][\w<>\[\]|.'\s]*?(?=[,);\]\s])/g, '');
 
   return out;

@@ -14,6 +14,8 @@ const COLOR_PIECE_FACE: string = '#FDF3D8';
 const COLOR_SELECT: string = '#F5A623';
 const COLOR_HINT: string = '#2E7D32';
 const COLOR_LAST: string = '#3E7CB1';
+/** 点击识别标记的颜色 */
+const COLOR_TAP: string = '#E53935';
 const PAD_RATIO: number = 0.5;
 /**
  * 交点命中判定容差（相对格距）。
@@ -53,6 +55,11 @@ export struct ChessBoard {
   @Prop lastToCol: number = -1;
   /** 交点间距（vp），由页面按可用宽度计算后传入 */
   @Prop cell: number = 36;
+  /** 最近一次点击被识别成的交点，-1 表示未命中棋盘 */
+  @Prop tapRow: number = -1;
+  @Prop tapCol: number = -1;
+  /** 是否显示点击识别标记 */
+  @Prop tapVisible: boolean = false;
 
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
   private ctx: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
@@ -237,6 +244,28 @@ export struct ChessBoard {
         ctx.beginPath();
         ctx.arc(this.px(tc), this.py(tr), this.cell * 0.11, 0, Math.PI * 2);
         ctx.fill();
+      }
+    }
+
+    // 点击识别标记：直接画出「系统认为你点的是哪一格」，便于核对是否点偏
+    if (this.tapVisible) {
+      if (this.tapRow < 0 || this.tapCol < 0) {
+        ctx.strokeStyle = COLOR_TAP;
+        ctx.lineWidth = Math.max(2, this.cell * 0.05);
+        ctx.strokeRect(this.cell * 0.12, this.cell * 0.12,
+          totalW - this.cell * 0.24, totalH - this.cell * 0.24);
+      } else {
+        ctx.strokeStyle = COLOR_TAP;
+        ctx.lineWidth = Math.max(2, this.cell * 0.06);
+        this.strokeAt(this.tapRow, this.tapCol, this.cell * 0.3);
+        ctx.beginPath();
+        ctx.moveTo(this.px(this.tapCol), this.py(this.tapRow) - this.cell * 0.5);
+        ctx.lineTo(this.px(this.tapCol), this.py(this.tapRow) + this.cell * 0.5);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(this.px(this.tapCol) - this.cell * 0.5, this.py(this.tapRow));
+        ctx.lineTo(this.px(this.tapCol) + this.cell * 0.5, this.py(this.tapRow));
+        ctx.stroke();
       }
     }
   }
