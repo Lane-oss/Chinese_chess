@@ -37,13 +37,19 @@ struct Index {
   @State geo: BoardGeometry = { cell: 34, pad: 17 };
   @State toast: string = '';
   @State showToast: boolean = false;
-  /** 最近一次点击被识别成的交点（-1 表示未命中棋盘），用于在棋盘上直接显示识别结果 */
+  /** 点击识别结果（与棋盘组件双向绑定）与信号量 */
   @State tapRow: number = -1;
   @State tapCol: number = -1;
-  /** 是否显示命中标记（2 秒后自动消失，避免干扰下棋） */
+  @State @Watch('onTapSignalChanged') tapSignal: number = 0;
+  /** 是否显示点击识别标记（默认关闭，避免遮挡选中环与落点） */
   @State tapVisible: boolean = false;
   /** 最近一次点击的判定说明 */
   @State tapText: string = '';
+  /** 已处理到的信号值，用于给回调通道去重 */
+  private handledSignal: number = 0;
+  /** 最近一次进入 handleTap 的行列，用于给回调通道去重 */
+  private lastTapRow: number = -2;
+  private lastTapCol: number = -2;
   private tapTimer: number = -1;
 
   aboutToAppear(): void {
@@ -89,10 +95,38 @@ struct Index {
   }
 
   /**
+   * tapSignal 变化即代表棋盘被点了一下：这是唯一的落点事件通道。
+   * 用 @Watch 而不是依赖组件属性回调，避免「回调没生效 → 整个棋盘点不动」。
+   */
+  private onTapSignalChanged(): void {
+    if (this.tapSignal === this.handledSignal) {
+      return;
+    }
+    this.handledSignal = this.tapSignal;
+    this.lastTapRow = this.tapRow;
+    this.lastTapCol = this.tapCol;
+    this.handleTap(this.tapRow, this.tapCol);
+  }
+
+  /**
+   * 兼容通道：若页面通过属性把这个方法传给棋盘组件，也会被调用。
+   * 用 (行,列) 去重，保证同一次点击不会因为走了两条通道而被处理两遍。
+   */
+  private onBoardTap(row: number, col: number): void {
+    if (row === this.lastTapRow && col === this.lastTapCol) {
+      return;
+    }
+    this.lastTapRow = row;
+    this.lastTapCol = col;
+    this.handleTap(row, col);
+  }
+
+  /**
    * 落点处理：选子 / 走子 / 换选。
    *
-   * 注意：只有「再点同一个子」和「成功走子」才会清空选中；
-   * 点到空白处或对方棋子时保留当前选中，避免用户点偏一点就丢失已标出的合法落点。
+   * 只需两次点击即可走子：点自己的棋子 → 点绿点。
+   * 只有「再点同一个子」和「成功走子」会清空选中；
+   * 点到空白处或对方棋子时保留当前选中，避免点偏一点就丢失已标出的合法落点。
    */
   private handleTap(row: number, col: number): void {
     if (row < 0 || col < 0) {
@@ -274,11 +308,12 @@ struct Index {
         lastToRow: this.lastMove === null ? -1 : this.lastMove.toRow,
         lastToCol: this.lastMove === null ? -1 : this.lastMove.toCol,
         cell: this.geo.cell,
-        tapRow: this.tapRow,
-        tapCol: this.tapCol,
+        tapRow: $tapRow,
+        tapCol: $tapCol,
+        tapSignal: $tapSignal,
         tapVisible: this.tapVisible,
-        onTap: (row: number, col: number) => {
-          this.handleTap(row, col);
+        onBoardTap: (row: number, col: number) => {
+          this.onBoardTap(row, col);
         }
       })
     }

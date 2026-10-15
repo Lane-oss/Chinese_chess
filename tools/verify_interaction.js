@@ -84,6 +84,10 @@ ${handleTapJs}
     targetList: [],
     tapRow: -1,
     tapCol: -1,
+    tapSignal: 0,
+    handledSignal: 0,
+    lastTapRow: -2,
+    lastTapCol: -2,
     tapVisible: false,
     tapText: '',
     tapTimer: -1,
@@ -112,6 +116,29 @@ ${handleTapJs}
       this.tapRow = row; this.tapCol = col; this.tapText = text; this.tapVisible = true;
     },
     showMessage(text) { this.messages.push(text); },
+
+    // ---- 以下按 Index.ets 中的 onTapSignalChanged / onBoardTap / handleTap 复刻 ----
+    onTapSignalChanged() {
+      if (this.tapSignal === this.handledSignal) return;
+      this.handledSignal = this.tapSignal;
+      this.lastTapRow = this.tapRow;
+      this.lastTapCol = this.tapCol;
+      this.handleTap(this.tapRow, this.tapCol);
+    },
+    onBoardTap(row, col) {
+      if (row === this.lastTapRow && col === this.lastTapCol) return;
+      this.lastTapRow = row;
+      this.lastTapCol = col;
+      this.handleTap(row, col);
+    },
+    /** 模拟棋盘组件被点击：写共享状态（触发 @Watch）并调用兼容回调 */
+    fireTap(row, col, useWatch = true, useCallback = true) {
+      this.tapRow = row;
+      this.tapCol = col;
+      this.tapSignal = this.tapSignal + 1;
+      if (useWatch) this.onTapSignalChanged();
+      if (useCallback) this.onBoardTap(row, col);
+    },
     applyMove(fromRow, fromCol, toRow, toCol) {
       const record = this.game.move(fromRow, fromCol, toRow, toCol);
       if (record === null) return;
@@ -143,29 +170,62 @@ function eq(a, b, label) {
   }
 }
 
-console.log('== 交互判定（使用页面真实 handleTap 源码）==');
+console.log('== 交互判定（真实 handleTap 源码 + 两条事件通道）==');
 
-it('点合法落点会走子，且不会残留选中', () => {
+it('【核心】点棋子选中后，直接点绿点即可走子（不需要再点第二次棋子）', () => {
   const { host } = makeHost();
   host.game.restart();
   host.boardData = host.game.board;
-  host.handleTap(7, 1);                       // 选红炮
-  ok(host.selectedRow === 7 && host.selectedCol === 1, '应选中 (7,1)');
-  ok(host.targetList.length > 0, '应给出合法落点');
-  const before = host.game.pieceCount();
-  host.handleTap(3, 1);                       // 点合法落点
-  eq(host.game.moveCount, 1, '应完成一步');
-  eq(host.selectedRow, -1, '走子后应清空选中');
-  eq(host.game.pieceCount(), before, '炮八进七不吃子，棋子数不变');
+
+  host.fireTap(7, 1);                          // 第一次点击：选红炮
+  eq(host.selectedRow, 7, '应进入选中状态');
+  eq(host.selectedCol, 1, '应进入选中状态');
+  ok(host.targetList.length > 0, '应显示可移动格');
+
+  host.fireTap(3, 1);                          // 第二次点击：点绿点
+  eq(host.game.moveCount, 1, '第二次点击就应完成走子（不能要求点第三次）');
+  eq(host.selectedRow, -1, '走子后清空选中');
+});
+
+it('只有 @Watch 通道时也能走子', () => {
+  const { host } = makeHost();
+  host.game.restart();
+  host.boardData = host.game.board;
+  host.fireTap(7, 1, true, false);
+  ok(host.selectedRow === 7, '应选中');
+  host.fireTap(3, 1, true, false);
+  eq(host.game.moveCount, 1, '走子应完成');
+});
+
+it('只有回调通道时也能走子', () => {
+  const { host } = makeHost();
+  host.game.restart();
+  host.boardData = host.game.board;
+  host.fireTap(7, 1, false, true);
+  ok(host.selectedRow === 7, '应选中');
+  host.fireTap(3, 1, false, true);
+  eq(host.game.moveCount, 1, '走子应完成');
+});
+
+it('两条通道同时生效时，一次点击只被处理一次（去重）', () => {
+  const { host } = makeHost();
+  host.game.restart();
+  host.boardData = host.game.board;
+  host.fireTap(7, 1, true, true);              // 两条通道都触发
+  eq(host.game.moveCount, 0, '选子不应产生步数');
+  ok(host.selectedRow === 7, '应仍处于选中状态（没有被第二次处理成取消）');
+  host.fireTap(2, 1, true, true);              // 两条通道都触发，吃黑炮
+  eq(host.game.moveCount, 1, '一次点击只能走一步');
+  eq(host.game.pieceCount(), 31, '应吃掉黑炮');
 });
 
 it('吃子落点同样走子（点的绿环）', () => {
   const { host } = makeHost();
   host.game.restart();
   host.boardData = host.game.board;
-  host.handleTap(7, 1);
+  host.fireTap(7, 1);
   ok(host.targetList.some(([r, c]) => r === 2 && c === 1), '(2,1) 应是可吃黑炮的落点');
-  host.handleTap(2, 1);
+  host.fireTap(2, 1);
   eq(host.game.moveCount, 1, '应完成吃子');
   eq(host.game.pieceCount(), 31, '棋子数应减 1');
 });
@@ -174,9 +234,9 @@ it('点到空白处保留选中（不再静默取消）', () => {
   const { host } = makeHost();
   host.game.restart();
   host.boardData = host.game.board;
-  host.handleTap(7, 1);
+  host.fireTap(7, 1);
   ok(host.selectedRow === 7, '先选中');
-  host.handleTap(5, 4);                       // 既不是落点也不是自己的子
+  host.fireTap(5, 4);                          // 既不是落点也不是自己的子
   eq(host.selectedRow, 7, '选中应保留');
   eq(host.selectedCol, 1, '选中应保留');
   ok(host.targetList.length > 0, '落点提示应保留');
@@ -187,9 +247,9 @@ it('点到对方棋子（非落点）保留选中', () => {
   const { host } = makeHost();
   host.game.restart();
   host.boardData = host.game.board;
-  host.handleTap(9, 4);                       // 红帅，可选但无路可走
+  host.fireTap(9, 4);                          // 红帅，可选但无路可走
   const selRow = host.selectedRow;
-  host.handleTap(0, 0);                       // 黑车，不是落点
+  host.fireTap(0, 0);                          // 黑车，不是落点
   eq(host.selectedRow, selRow, '选中应保留');
 });
 
@@ -197,8 +257,8 @@ it('点自己另一个子 → 换选', () => {
   const { host } = makeHost();
   host.game.restart();
   host.boardData = host.game.board;
-  host.handleTap(7, 1);
-  host.handleTap(7, 7);                       // 另一个红炮
+  host.fireTap(7, 1);
+  host.fireTap(7, 7);                          // 另一个红炮
   eq(host.selectedRow, 7, '换选后仍为第 7 行');
   eq(host.selectedCol, 7, '应换选到 (7,7)');
 });
@@ -207,8 +267,8 @@ it('再点同一个子 → 取消选中', () => {
   const { host } = makeHost();
   host.game.restart();
   host.boardData = host.game.board;
-  host.handleTap(7, 1);
-  host.handleTap(7, 1);
+  host.fireTap(7, 1);
+  host.fireTap(7, 1);
   eq(host.selectedRow, -1, '应取消选中');
   eq(host.targetList.length, 0, '落点应清空');
 });
@@ -217,7 +277,7 @@ it('未命中棋盘时给出提示且不动局面', () => {
   const { host } = makeHost();
   host.game.restart();
   host.boardData = host.game.board;
-  host.handleTap(-1, -1);
+  host.fireTap(-1, -1);
   eq(host.game.moveCount, 0, '不应产生步数');
   ok(host.messages.length > 0, '应提示点偏了');
 });
@@ -226,7 +286,7 @@ it('开局先点对方棋子 → 提示先选自己的子，且不产生选中',
   const { host } = makeHost();
   host.game.restart();
   host.boardData = host.game.board;
-  host.handleTap(0, 0);                       // 黑车，红方回合
+  host.fireTap(0, 0);                         // 黑车，红方回合
   eq(host.selectedRow, -1, '不应选中对方棋子');
   ok(host.messages.length > 0, '应提示');
   eq(host.game.moveCount, 0, '不应走子');
@@ -236,12 +296,33 @@ it('轮次切换后可以正常选另一方', () => {
   const { host } = makeHost();
   host.game.restart();
   host.boardData = host.game.board;
-  host.handleTap(7, 1);
-  host.handleTap(3, 1);                       // 红方走一步
+  host.fireTap(7, 1);
+  host.fireTap(3, 1);                         // 红方走一步
   host.boardData = host.game.board;
-  host.handleTap(0, 1);                       // 现在轮黑方，选黑马
+  host.fireTap(0, 1);                         // 现在轮黑方，选黑马
   ok(host.selectedRow === 0, '黑方棋子应可选');
   ok(host.targetList.length > 0, '应给出黑方落点');
+});
+
+it('连续走多步都不需要重复点击', () => {
+  const { host } = makeHost();
+  host.game.restart();
+  host.boardData = host.game.board;
+  const moves = [
+    [7, 1, 3, 1],   // 红炮八进七
+    [0, 1, 2, 2],   // 黑马二进三
+    [3, 1, 3, 4],   // 红炮吃中卒
+    [2, 2, 3, 4]    // 黑马吃掉停在 (3,4) 的红炮
+  ];
+  for (let i = 0; i < moves.length; i++) {
+    const [fr, fc, tr, tc] = moves[i];
+    host.fireTap(fr, fc);
+    ok(host.selectedRow === fr && host.selectedCol === fc,
+      `第 ${i + 1} 步应先选中 (${fr},${fc})`);
+    host.fireTap(tr, tc);
+    eq(host.game.moveCount, i + 1, `第 ${i + 1} 步应当即走子`);
+  }
+  eq(host.game.moveCount, 4, '四步都应成功');
 });
 
 console.log(`\n${'='.repeat(52)}`);

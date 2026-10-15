@@ -16,6 +16,8 @@ const COLOR_HINT: string = '#2E7D32';
 const COLOR_LAST: string = '#3E7CB1';
 /** 点击识别标记的颜色 */
 const COLOR_TAP: string = '#E53935';
+/** 是否绘制点击识别标记。默认关闭：它会与选中环、落点标记抢视觉，排查问题时再打开。 */
+const SHOW_TAP_MARKER: boolean = false;
 const PAD_RATIO: number = 0.5;
 /**
  * 交点命中判定容差（相对格距）。
@@ -55,12 +57,25 @@ export struct ChessBoard {
   @Prop lastToCol: number = -1;
   /** 交点间距（vp），由页面按可用宽度计算后传入 */
   @Prop cell: number = 36;
-  /** 最近一次点击被识别成的交点，-1 表示未命中棋盘 */
-  @Prop tapRow: number = -1;
-  @Prop tapCol: number = -1;
+  /**
+   * 点击结果回传：与页面双向绑定。
+   * 用 @Link 共享状态而不是「给组件属性赋函数」——后者能否生效依赖实现细节，
+   * 一旦不生效，整个棋盘就会点不动（现象是点了完全没反应）。
+   * 页面用 @Watch 监听 tapSignal 变化后再处理，保证父组件一定收到通知。
+   */
+  @Link tapRow: number;
+  @Link tapCol: number;
+  @Link tapSignal: number;
   /** 是否显示点击识别标记 */
   @Prop tapVisible: boolean = false;
 
+  /**
+   * 可选的兼容回调。默认空实现；主线是 @Watch(tapSignal)，二者会去重。
+   */
+  onBoardTap: (row: number, col: number) => void = (row: number, col: number) => {
+    void row;
+    void col;
+  };
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
   private ctx: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
 
@@ -111,20 +126,18 @@ export struct ChessBoard {
           this.draw();
         })
         .onClick((event: ClickEvent) => {
-          this.draw();
+          // 只写共享状态：父组件通过 @Watch(tapSignal) 收到通知，这是唯一的事件通道，
+          // 避免「共享状态 + 回调」两条路各触发一次导致一次点击被处理两遍。
           const pos: number[] = this.locate(event.x, event.y);
-          this.onTap(pos[0], pos[1]);
+          this.tapRow = pos[0];
+          this.tapCol = pos[1];
+          this.tapSignal = this.tapSignal + 1;
+          this.onBoardTap(pos[0], pos[1]);
         })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Center)
   }
-
-  /** 点击回调，由页面实现 */
-  onTap: (row: number, col: number) => void = (row: number, col: number) => {
-    void row;
-    void col;
-  };
 
   private px(col: number): number {
     return this.cell * PAD_RATIO + col * this.cell;
@@ -247,8 +260,8 @@ export struct ChessBoard {
       }
     }
 
-    // 点击识别标记：直接画出「系统认为你点的是哪一格」，便于核对是否点偏
-    if (this.tapVisible) {
+    // 点击识别标记：只在排查问题时显示，且画得极小，避免遮住选中环与落点标记
+    if (SHOW_TAP_MARKER && this.tapVisible) {
       if (this.tapRow < 0 || this.tapCol < 0) {
         ctx.strokeStyle = COLOR_TAP;
         ctx.lineWidth = Math.max(2, this.cell * 0.05);
@@ -256,16 +269,15 @@ export struct ChessBoard {
           totalW - this.cell * 0.24, totalH - this.cell * 0.24);
       } else {
         ctx.strokeStyle = COLOR_TAP;
-        ctx.lineWidth = Math.max(2, this.cell * 0.06);
-        this.strokeAt(this.tapRow, this.tapCol, this.cell * 0.3);
+        ctx.lineWidth = Math.max(1, this.cell * 0.04);
         ctx.beginPath();
-        ctx.moveTo(this.px(this.tapCol), this.py(this.tapRow) - this.cell * 0.5);
-        ctx.lineTo(this.px(this.tapCol), this.py(this.tapRow) + this.cell * 0.5);
+        ctx.arc(this.px(this.tapCol), this.py(this.tapRow), this.cell * 0.49, 0, Math.PI * 2);
         ctx.stroke();
+        ctx.fillStyle = COLOR_TAP;
         ctx.beginPath();
-        ctx.moveTo(this.px(this.tapCol) - this.cell * 0.5, this.py(this.tapRow));
-        ctx.lineTo(this.px(this.tapCol) + this.cell * 0.5, this.py(this.tapRow));
-        ctx.stroke();
+        ctx.arc(this.px(this.tapCol) + this.cell * 0.4, this.py(this.tapRow) - this.cell * 0.4,
+          this.cell * 0.06, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
   }
