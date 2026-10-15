@@ -274,7 +274,7 @@ function collectCannonMoves(board: Board, row: number, col: number,
       empty.push(slide[j]);
     }
     if (jump.length > 0) {
-      // jump[0] 是炮架（炮可以吃掉贴身的第一个棋子），jump[1] 是隔子后可吃的目标
+      // jump[0] 是炮架（第一个阻挡子），jump[1] 是炮架之后的第一个棋子
       screens.push(jump);
     }
   }
@@ -283,16 +283,13 @@ function collectCannonMoves(board: Board, row: number, col: number,
     moves.push(empty[i]);
   }
   for (let i = 0; i < screens.length; i++) {
-    // 贴近炮身的第一个棋子可以直接吃（此时它挨着炮，不需要炮架）
-    const first: number[] = screens[i][0];
-    if (!isOwnPiece(pieceAt(board, first[0], first[1]), side)) {
-      moves.push(makePos(first[0], first[1]));
-    }
-    // 隔一个棋子（炮架）之后的第一个棋子同样可吃（炮打隔子）
+    // 炮必须隔子才能吃：只有「炮架之后的第一个棋子」可吃。
+    // 绝不能把紧邻炮身的第一个子当成可吃目标——那样炮贴到对方将帅前面
+    // 就会被误判为将军（而且实际上不吃子）。
     if (screens[i].length > 1) {
-      const second: number[] = screens[i][1];
-      if (!isOwnPiece(pieceAt(board, second[0], second[1]), side)) {
-        moves.push(makePos(second[0], second[1]));
+      const target: number[] = screens[i][1];
+      if (!isOwnPiece(pieceAt(board, target[0], target[1]), side)) {
+        moves.push(target);
       }
     }
   }
@@ -415,8 +412,15 @@ export function findGeneral(board: Board, side: Player): number[] {
   return [-1, -1];
 }
 
-/** 不带任何走法限制的伪合法着法（只判断走子形态与吃子目标） */
-export function pseudoMoves(board: Board, fromRow: number, fromCol: number): number[][] {
+/**
+ * 不带任何走法限制的伪合法着法（只判断走子形态与吃子目标）。
+ *
+ * @param capturesOnly 只返回「能吃到棋子」的着法，用于判断某方是否被将军。
+ *        必须区分两者：炮走到空位并不构成威胁，只有隔子吃到目标才是将军。
+ *        早期版本用完整走法表判断将军，导致「炮贴到对方将帅前」被误判为将军。
+ */
+export function pseudoMoves(board: Board, fromRow: number, fromCol: number,
+                            capturesOnly: boolean = false): number[][] {
   const piece: number = pieceAt(board, fromRow, fromCol);
   const side: Player | null = pieceOwner(piece);
   if (side === null) {
@@ -427,7 +431,20 @@ export function pseudoMoves(board: Board, fromRow: number, fromCol: number): num
     return collectChariotMoves(board, fromRow, fromCol);
   }
   if (kind === 'cannon') {
-    return collectCannonMoves(board, fromRow, fromCol, side);
+    const moves: number[][] = collectCannonMoves(board, fromRow, fromCol, side);
+    if (!capturesOnly) {
+      return moves;
+    }
+    // 炮只有「隔子吃」才算威胁：落在空位上的着法一律排除。
+    // 这样炮贴身贴着对方老将也不会被判为将军（象棋里炮无炮架不能吃子）。
+    const captures: number[][] = [];
+    for (let i = 0; i < moves.length; i++) {
+      const target: number = pieceAt(board, moves[i][0], moves[i][1]);
+      if (target !== K_NONE && !isOwnPiece(target, side)) {
+        captures.push(moves[i]);
+      }
+    }
+    return captures;
   }
   if (kind === 'horse') {
     return collectHorseMoves(board, fromRow, fromCol, side);
@@ -487,7 +504,9 @@ export function isInCheck(board: Board, side: Player): boolean {
       if (pieceKind(piece) === 'general') {
         continue; // 将帅之间不能互吃，照面已由 generalsFacing 处理
       }
-      const moves: number[][] = pseudoMoves(board, r, c);
+      // 只按「能吃子」的着法判断将军：炮落在空位上不构成威胁，
+      // 否则炮贴到对方将帅面前会被误判为将军。
+      const moves: number[][] = pseudoMoves(board, r, c, true);
       for (let i = 0; i < moves.length; i++) {
         if (moves[i][0] === generalPos[0] && moves[i][1] === generalPos[1]) {
           return true;

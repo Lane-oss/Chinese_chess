@@ -214,9 +214,9 @@ it('两条通道同时生效时，一次点击只被处理一次（去重）', (
   host.fireTap(7, 1, true, true);              // 两条通道都触发
   eq(host.game.moveCount, 0, '选子不应产生步数');
   ok(host.selectedRow === 7, '应仍处于选中状态（没有被第二次处理成取消）');
-  host.fireTap(2, 1, true, true);              // 两条通道都触发，吃黑炮
+  host.fireTap(0, 1, true, true);              // 两条通道都触发，隔子吃黑马
   eq(host.game.moveCount, 1, '一次点击只能走一步');
-  eq(host.game.pieceCount(), 31, '应吃掉黑炮');
+  eq(host.game.pieceCount(), 31, '应吃掉黑马');
 });
 
 it('吃子落点同样走子（点的绿环）', () => {
@@ -224,8 +224,10 @@ it('吃子落点同样走子（点的绿环）', () => {
   host.game.restart();
   host.boardData = host.game.board;
   host.fireTap(7, 1);
-  ok(host.targetList.some(([r, c]) => r === 2 && c === 1), '(2,1) 应是可吃黑炮的落点');
-  host.fireTap(2, 1);
+  // 炮必须隔子吃：炮架是 (2,1) 的黑炮，可吃其后的黑马 (0,1)
+  ok(host.targetList.some(([r, c]) => r === 0 && c === 1), '(0,1) 应是可吃黑马的落点');
+  ok(!host.targetList.some(([r, c]) => r === 2 && c === 1), '(2,1) 是炮架，不可吃');
+  host.fireTap(0, 1);
   eq(host.game.moveCount, 1, '应完成吃子');
   eq(host.game.pieceCount(), 31, '棋子数应减 1');
 });
